@@ -826,6 +826,157 @@
   @media print {
     nav.topnav, .jump-fab, .filters, .login-overlay { display: none; }
   }
+
+  /* ============ GANTT ============ */
+  .gantt-wrap { overflow-x: auto; }
+  .gantt-inner { min-width: 720px; }
+  .gantt-head-row {
+    display: flex;
+    margin-bottom: 10px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--gray-mid);
+  }
+  .gantt-label-col-head {
+    width: 240px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--gray-text);
+  }
+  .gantt-months {
+    flex: 1;
+    position: relative;
+    height: 20px;
+  }
+  .gantt-month-tick {
+    position: absolute;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--gray-text);
+    transform: translateX(-50%);
+  }
+  .gantt-group { margin-bottom: 28px; }
+  .gantt-group-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .gantt-group-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--gray-text);
+    flex-shrink: 0;
+  }
+  .gantt-group-rule { flex: 1; height: 1px; background: var(--gray-mid); }
+  .gantt-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 7px;
+  }
+  .gantt-row-label {
+    width: 240px;
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--black);
+    padding-right: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+  .gantt-row-track {
+    flex: 1;
+    height: 28px;
+    position: relative;
+    background: var(--gray-light);
+    border-radius: 4px;
+    overflow: visible;
+  }
+  .gantt-vline {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 1px;
+    background: var(--white);
+    z-index: 0;
+  }
+  .gantt-today-line {
+    position: absolute;
+    top: -5px; bottom: -5px;
+    width: 2px;
+    background: var(--red-soft);
+    z-index: 3;
+    border-radius: 1px;
+  }
+  .gantt-today-line::after {
+    content: 'Today';
+    position: absolute;
+    top: -17px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--red-soft);
+    white-space: nowrap;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .gantt-bar {
+    position: absolute;
+    top: 4px; bottom: 4px;
+    border-radius: 4px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    padding: 0 7px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+    transition: filter 0.15s ease;
+    min-width: 4px;
+  }
+  .gantt-bar:hover { filter: brightness(0.88); }
+  .gantt-bar.revenue { background: var(--green); color: var(--white); }
+  .gantt-bar.ops { background: var(--blue); color: #065f6e; }
+  .gantt-bar.exec { background: var(--moz-blue); color: var(--white); }
+  .gantt-owner-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.25);
+    margin-right: 5px;
+    flex-shrink: 0;
+  }
+  .gantt-legend {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .gantt-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--gray-text);
+  }
+  .gantt-legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
 </style>
 </head>
 <body>
@@ -899,6 +1050,7 @@
   <ul id="navLinks">
     <li><a href="#hero">Overview</a></li>
     <li><a href="#q3">Q3 Sprint</a></li>
+    <li><a href="#gantt">Gantt</a></li>
     <li><a href="#q4">Q4 Timeline</a></li>
     <li><a href="#kpis">KPIs</a></li>
     <li><a href="#cadence">Cadence</a></li>
@@ -948,6 +1100,23 @@
     <div class="filters" id="filters"></div>
 
     <div class="kanban" id="kanban"></div>
+  </div>
+</section>
+
+<!-- GANTT -->
+<section class="workstream alt" id="gantt" style="display: none;">
+  <div class="container">
+    <div class="section-eyebrow">Visual Timeline</div>
+    <h2 class="section-title">Gantt View · H2 2026</h2>
+    <p class="section-lede">All 31 deliverables plotted across the half — grouped by workstream, sized by work window.</p>
+    <div class="gantt-legend">
+      <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--green)"></div>Revenue & GTM</div>
+      <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--blue)"></div>Operating Model</div>
+      <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--moz-blue)"></div>Strategic / Exec</div>
+    </div>
+    <div class="gantt-wrap">
+      <div id="ganttChart"></div>
+    </div>
   </div>
 </section>
 
@@ -1098,7 +1267,7 @@
   }
 
   function showApp() {
-    ['hero', 'q3', 'q4', 'kpis', 'cadence', 'open', 'owners', 'footer'].forEach(id => {
+    ['hero', 'q3', 'gantt', 'q4', 'kpis', 'cadence', 'open', 'owners', 'footer'].forEach(id => {
       document.getElementById(id).style.display = '';
     });
     // Show user email in nav
@@ -1142,6 +1311,7 @@
     renderPillars(state.pillars);
     renderKanban(state.cards);
     renderFilters();
+    renderGantt(state.cards);
     renderKPIs(state.kpis);
     renderCadence(state.cadence);
     renderOpenItems(state.openItems);
@@ -1227,7 +1397,10 @@
     document.getElementById('kanban').innerHTML = html;
 
     document.querySelectorAll('.card-item').forEach(card => {
-      card.addEventListener('click', (e) => toggleCardDetail(e.currentTarget));
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('input, button, textarea, a')) return;
+        toggleCardDetail(e.currentTarget);
+      });
     });
   }
 
@@ -1409,6 +1582,91 @@
       `;
     }).join('');
     document.getElementById('timeline').innerHTML = html;
+  }
+
+  function renderGantt(cards) {
+    const START = new Date('2026-06-01');
+    const END   = new Date('2026-12-31');
+    const TOTAL_MS = END - START;
+    const today = new Date();
+
+    function toPct(dateStr) {
+      const d = new Date(dateStr);
+      const clamped = new Date(Math.max(START.getTime(), Math.min(END.getTime(), d.getTime())));
+      return ((clamped - START) / TOTAL_MS * 100);
+    }
+
+    const months = [
+      { label: 'Jun', date: '2026-06-01' },
+      { label: 'Jul', date: '2026-07-01' },
+      { label: 'Aug', date: '2026-08-01' },
+      { label: 'Sep', date: '2026-09-01' },
+      { label: 'Oct', date: '2026-10-01' },
+      { label: 'Nov', date: '2026-11-01' },
+      { label: 'Dec', date: '2026-12-01' },
+    ];
+
+    const laneOrder = ['revenue', 'ops', 'exec'];
+    const laneNames = { revenue: 'Revenue & GTM', ops: 'Operating Model', exec: 'Strategic / Exec' };
+    const lanes = { revenue: [], ops: [], exec: [] };
+    cards.forEach(c => { if (lanes[c.lane]) lanes[c.lane].push(c); });
+
+    const monthTicks = months.map(m =>
+      `<div class="gantt-month-tick" style="left:${toPct(m.date).toFixed(1)}%">${m.label}</div>`
+    ).join('');
+
+    const vlines = months.map(m =>
+      `<div class="gantt-vline" style="left:${toPct(m.date).toFixed(1)}%"></div>`
+    ).join('');
+
+    const todayPct = toPct(today.toISOString().slice(0, 10));
+    const todayLine = todayPct >= 0 && todayPct <= 100
+      ? `<div class="gantt-today-line" style="left:${todayPct.toFixed(1)}%"></div>`
+      : '';
+
+    const groupsHtml = laneOrder.map(laneKey => {
+      const laneCards = lanes[laneKey];
+      if (!laneCards || !laneCards.length) return '';
+
+      const rows = laneCards.map(c => {
+        const left  = toPct(c.start || '2026-06-01');
+        const right = toPct(c.end   || '2026-12-31');
+        const width = Math.max(0.8, right - left);
+        const ownerTag = c.owner === 'joint' ? 'JNT' : c.owner === 'moz' ? 'MOZ' : 'SOCi';
+        const barText = width > 7
+          ? `<span class="gantt-owner-tag">${ownerTag}</span>${c.title}`
+          : '';
+        return `
+          <div class="gantt-row">
+            <div class="gantt-row-label" title="${c.title}">${c.title}</div>
+            <div class="gantt-row-track">
+              ${vlines}
+              ${todayLine}
+              <div class="gantt-bar ${laneKey}"
+                   style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"
+                   title="${c.title} · ${c.due}">${barText}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+      return `
+        <div class="gantt-group">
+          <div class="gantt-group-head">
+            <span class="gantt-group-label">${laneNames[laneKey]}</span>
+            <div class="gantt-group-rule"></div>
+          </div>
+          ${rows}
+        </div>`;
+    }).join('');
+
+    document.getElementById('ganttChart').innerHTML = `
+      <div class="gantt-inner">
+        <div class="gantt-head-row">
+          <div class="gantt-label-col-head">Deliverable</div>
+          <div class="gantt-months">${monthTicks}</div>
+        </div>
+        ${groupsHtml}
+      </div>`;
   }
 
   async function handleSignin() {
