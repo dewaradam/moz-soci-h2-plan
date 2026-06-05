@@ -454,6 +454,36 @@
   .tag.priority-low { background: var(--gray-light); color: var(--gray-text); }
   .tag.source { background: #F3F4F6; color: var(--gray-text); font-weight: 500; }
 
+  .card-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .card-title-row .card-title { margin-bottom: 0; flex: 1; }
+  .card-complete-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--gray-mid);
+    background: var(--white);
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: transparent;
+    padding: 0;
+    transition: all 0.15s ease;
+  }
+  .card-complete-btn:hover { border-color: var(--green); color: var(--green); }
+  .card-complete-btn.done { background: var(--green); border-color: var(--green); color: var(--white); }
+  .card-item.completed { opacity: 0.6; }
+  .card-item.completed .card-title { text-decoration: line-through; color: var(--gray-text); }
+  .card-item.completed:hover { opacity: 0.8; border-color: var(--green); }
+
   .card-detail {
     display: none;
     margin-top: 10px;
@@ -1371,8 +1401,11 @@
     const laneNames = { revenue: 'Revenue & GTM', ops: 'Operating Model', support: 'Support & Enablement', exec: 'Strategic / Exec' };
     const html = Object.entries(lanes).map(([laneKey, laneCards]) => {
       const cardsHtml = laneCards.map(c => `
-        <div class="card-item" data-card-id="${c.id}" data-owner="${c.owner}" data-priority="${c.priority}">
-          <div class="card-title">${c.title}</div>
+        <div class="card-item${c.completed ? ' completed' : ''}" data-card-id="${c.id}" data-owner="${c.owner}" data-priority="${c.priority}">
+          <div class="card-title-row">
+            <div class="card-title">${c.title}</div>
+            ${APP.profile?.role === 'editor' ? `<button class="card-complete-btn${c.completed ? ' done' : ''}" onclick="toggleComplete('${c.id}')" title="${c.completed ? 'Mark incomplete' : 'Mark complete'}">✓</button>` : ''}
+          </div>
           <div class="card-meta">
             <span class="tag owner-${c.owner === 'joint' ? 'joint' : c.owner === 'moz' ? 'moz' : 'soci'}">${c.owner.toUpperCase()}</span>
             <span class="tag due">${c.due}</span>
@@ -1582,6 +1615,35 @@
       `;
     }).join('');
     document.getElementById('timeline').innerHTML = html;
+  }
+
+  async function saveState() {
+    if (!APP.sb || APP.profile?.role !== 'editor') return;
+    const indicator = document.getElementById('savingIndicator');
+    indicator.classList.add('show');
+    const { error } = await APP.sb.from('plan_state')
+      .upsert({ id: 1, data: APP.state, last_edit_at: new Date().toISOString(), last_edit_by: APP.profile.id });
+    indicator.classList.remove('show');
+    if (error) alert('Save failed: ' + error.message);
+  }
+
+  function toggleComplete(cardId) {
+    const card = APP.state?.cards?.find(c => c.id === cardId);
+    if (!card) return;
+    card.completed = !card.completed;
+    // Update card DOM directly without full re-render
+    const el = document.querySelector(`[data-card-id="${cardId}"]`);
+    if (el) {
+      el.classList.toggle('completed', card.completed);
+      const btn = el.querySelector('.card-complete-btn');
+      if (btn) {
+        btn.classList.toggle('done', card.completed);
+        btn.title = card.completed ? 'Mark incomplete' : 'Mark complete';
+      }
+      const title = el.querySelector('.card-title');
+      if (title) title.style.textDecoration = card.completed ? 'line-through' : '';
+    }
+    saveState();
   }
 
   function renderGantt(cards) {
