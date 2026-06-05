@@ -977,6 +977,7 @@
   .gantt-bar:hover { filter: brightness(0.88); }
   .gantt-bar.revenue { background: var(--green); color: var(--white); }
   .gantt-bar.ops { background: var(--blue); color: #065f6e; }
+  .gantt-bar.support { background: var(--amber); color: #78350F; }
   .gantt-bar.exec { background: var(--moz-blue); color: var(--white); }
   .gantt-owner-tag {
     display: inline-block;
@@ -1142,6 +1143,7 @@
     <div class="gantt-legend">
       <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--green)"></div>Revenue & GTM</div>
       <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--blue)"></div>Operating Model</div>
+      <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--amber)"></div>Support & Enablement</div>
       <div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:var(--moz-blue)"></div>Strategic / Exec</div>
     </div>
     <div class="gantt-wrap">
@@ -1668,9 +1670,9 @@
       { label: 'Dec', date: '2026-12-01' },
     ];
 
-    const laneOrder = ['revenue', 'ops', 'exec'];
-    const laneNames = { revenue: 'Revenue & GTM', ops: 'Operating Model', exec: 'Strategic / Exec' };
-    const lanes = { revenue: [], ops: [], exec: [] };
+    const laneOrder = ['revenue', 'ops', 'support', 'exec'];
+    const laneNames = { revenue: 'Revenue & GTM', ops: 'Operating Model', support: 'Support & Enablement', exec: 'Strategic / Exec' };
+    const lanes = { revenue: [], ops: [], support: [], exec: [] };
     cards.forEach(c => { if (lanes[c.lane]) lanes[c.lane].push(c); });
 
     const monthTicks = months.map(m =>
