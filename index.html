@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="defaults.js"></script>
 <style>
   :root {
     --green: #29CC91;
@@ -906,7 +907,7 @@
   </ul>
   <div class="nav-user">
     <span id="userEmail"></span>
-    <button onclick="toggleAdminPanel()">Users</button>
+    <button id="adminBtn" onclick="toggleAdminPanel()" style="display:none;">Users</button>
     <button onclick="handleLogout()">Logout</button>
   </div>
 </nav>
@@ -1029,13 +1030,39 @@
     commentCounts: {},
   };
 
+  function escHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   if (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
     document.getElementById('configBanner').style.display = 'block';
     document.getElementById('loginOverlay').style.display = 'none';
   } else {
     APP.sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // Handle password reset redirect and other auth events
+    APP.sb.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        const newPassword = prompt('Enter your new password:');
+        if (newPassword) {
+          APP.sb.auth.updateUser({ password: newPassword }).then(({ error }) => {
+            if (error) alert('Password update failed: ' + error.message);
+            else { alert('Password updated! Please sign in.'); location.reload(); }
+          });
+        }
+      }
+    });
+
     init();
   }
+
+  // Wire up login tabs immediately — must run before auth, not inside setupEventListeners()
+  document.addEventListener('DOMContentLoaded', setupLoginTabs);
 
   async function init() {
     const { data: { session } } = await APP.sb.auth.getSession();
@@ -1044,6 +1071,13 @@
     if (session) {
       const { data: profile } = await APP.sb.from('profiles').select('*').eq('id', session.user.id).single();
       APP.profile = profile;
+
+      if (!profile) {
+        // Profile row missing (trigger failure or RLS issue) — sign out and show login
+        await APP.sb.auth.signOut();
+        document.getElementById('loginOverlay').style.display = 'flex';
+        return;
+      }
 
       if (profile?.role === 'pending') {
         document.getElementById('loginOverlay').style.display = 'none';
@@ -1067,6 +1101,13 @@
     ['hero', 'q3', 'q4', 'kpis', 'cadence', 'open', 'owners', 'footer'].forEach(id => {
       document.getElementById(id).style.display = '';
     });
+    // Show user email in nav
+    const emailEl = document.getElementById('userEmail');
+    if (emailEl && APP.profile) emailEl.textContent = APP.profile.full_name || APP.profile.email || '';
+    // Show admin button only for editors
+    if (APP.profile?.role === 'editor') {
+      document.getElementById('adminBtn').style.display = '';
+    }
     renderFromState(APP.state || window.DEFAULT_STATE);
   }
 
@@ -1096,6 +1137,7 @@
   }
 
   function renderFromState(state) {
+    if (!state) return;
     renderSnapshot(state.snapshot);
     renderPillars(state.pillars);
     renderKanban(state.cards);
@@ -1111,7 +1153,7 @@
     const html = snapshot.map(s => `
       <div class="stat-card">
         <div class="stat-label">${s.label}</div>
-        <div class="stat-value${s.value.includes('$') || s.value.includes('%') ? ' green' : ''}">${s.value}</div>
+        <div class="stat-value${s.trendType === 'up' ? ' green' : ''}">${s.value}</div>
         <div class="stat-detail">${s.detail}</div>
         <span class="stat-trend ${s.trendType}">${s.trend}</span>
       </div>
@@ -1205,11 +1247,11 @@
 
   async function loadComments(cardId, container) {
     if (!APP.sb) return;
-    const { data } = await APP.sb.from('comments').select('*').eq('card_id', cardId).order('created_at', { ascending: false });
+    const { data } = await APP.sb.from('comments').select('*').eq('card_id', cardId).order('created_at', { ascending: true });
     const html = (data || []).map(c => `
       <div class="comment">
-        <div class="comment-author">${c.author_name} <span class="comment-role">(${c.author_role})</span></div>
-        <div class="comment-text">${c.text}</div>
+        <div class="comment-author">${escHtml(c.author_name)} <span class="comment-role">(${escHtml(c.author_role)})</span></div>
+        <div class="comment-text">${escHtml(c.text)}</div>
       </div>
     `).join('');
     const inputHtml = APP.profile?.role ? `
@@ -1225,13 +1267,14 @@
     const input = document.getElementById(`comment-input-${cardId}`);
     if (!APP.sb || !input.value.trim()) return;
 
-    await APP.sb.from('comments').insert({
+    const { error } = await APP.sb.from('comments').insert({
       card_id: cardId,
       author_id: APP.profile.id,
       author_name: APP.profile.full_name || APP.profile.email,
       author_role: APP.profile.role,
       text: input.value,
     });
+    if (error) { alert('Failed to post comment: ' + error.message); return; }
     input.value = '';
     const container = document.querySelector(`[data-card-id="${cardId}"] .card-comments`);
     await loadComments(cardId, container);
@@ -1247,6 +1290,19 @@
       document.querySelector('[data-filter="all"]').classList.remove('active');
       const type = ['soci', 'moz', 'joint'].includes(filter) ? 'owner' : 'priority';
       APP.activeFilters[type] = filter !== APP.activeFilters[type] ? filter : null;
+      // Update pill active states for both groups
+      ['soci', 'moz', 'joint', 'high', 'med'].forEach(f => {
+        const btn = document.querySelector(`#filters [data-filter="${f}"]`);
+        if (btn) btn.classList.remove('active');
+      });
+      if (APP.activeFilters.owner) {
+        const btn = document.querySelector(`#filters [data-filter="${APP.activeFilters.owner}"]`);
+        if (btn) btn.classList.add('active');
+      }
+      if (APP.activeFilters.priority) {
+        const btn = document.querySelector(`#filters [data-filter="${APP.activeFilters.priority}"]`);
+        if (btn) btn.classList.add('active');
+      }
     }
 
     document.querySelectorAll('.card-item').forEach(card => {
@@ -1369,9 +1425,11 @@
     const name = document.getElementById('signupName').value;
     const password = document.getElementById('signupPassword').value;
     if (!email || !name || !password) return alert('Fill in all fields');
-    const { error } = await APP.sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
-    if (error) alert(error.message);
-    else alert('Check your email to confirm');
+    const { data, error } = await APP.sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
+    if (error) { alert(error.message); return; }
+    // If session is returned, email confirmation is disabled — reload into app
+    if (data?.session) { location.reload(); return; }
+    alert('Account created! Check your email to confirm before signing in.');
   }
 
   async function handleForgotPassword() {
@@ -1414,15 +1472,22 @@
     loadUsersForAdmin();
   }
 
-  function setupEventListeners() {
+  // Login tab switching — called immediately on page load, independent of auth state
+  function setupLoginTabs() {
     document.querySelectorAll('.login-tab').forEach(tab => {
       tab.addEventListener('click', (e) => {
+        const tabEl = e.currentTarget;
+        const tabName = tabEl.dataset.tab;
         document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.login-form').forEach(f => f.classList.remove('active'));
-        e.target.classList.add('active');
-        document.getElementById(e.target.dataset.tab + 'Form').classList.add('active');
+        tabEl.classList.add('active');
+        const form = document.getElementById(tabName + 'Form');
+        if (form) form.classList.add('active');
       });
     });
+  }
+
+  function setupEventListeners() {
 
     const sections = document.querySelectorAll('section[id]');
     const navLinks = document.querySelectorAll('nav.topnav ul a');
