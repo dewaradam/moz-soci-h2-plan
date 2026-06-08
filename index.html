@@ -939,17 +939,15 @@
   }
   .gantt-today-line {
     position: absolute;
-    top: -5px; bottom: -5px;
-    width: 2px;
-    background: var(--red-soft);
-    z-index: 3;
-    border-radius: 1px;
+    top: 0; bottom: 0;
+    width: 1px;
+    background: rgba(239,68,68,0.35);
+    z-index: 2;
+    pointer-events: none;
   }
-  .gantt-today-line::after {
-    content: 'Today';
+  .gantt-today-header-marker {
     position: absolute;
-    top: -17px;
-    left: 50%;
+    bottom: 0;
     transform: translateX(-50%);
     font-size: 9px;
     font-weight: 700;
@@ -957,6 +955,17 @@
     white-space: nowrap;
     letter-spacing: 0.5px;
     text-transform: uppercase;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .gantt-today-header-marker::after {
+    content: '';
+    display: block;
+    width: 1px;
+    height: 6px;
+    background: var(--red-soft);
   }
   .gantt-bar {
     position: absolute;
@@ -989,6 +998,19 @@
     margin-right: 5px;
     flex-shrink: 0;
   }
+  /* Drag and drop */
+  .card-item[draggable="true"] { cursor: grab; }
+  .card-item[draggable="true"]:active { cursor: grabbing; }
+  .card-item.dragging { opacity: 0.35; border-style: dashed; }
+  .lane.drag-over > .cards { background: var(--green-light); border-radius: var(--radius-sm); }
+  .drop-indicator {
+    height: 3px;
+    background: var(--green);
+    border-radius: 2px;
+    margin: 2px 0;
+    pointer-events: none;
+  }
+
   .gantt-legend {
     display: flex;
     gap: 20px;
@@ -1400,13 +1422,14 @@
       lanes[c.lane].push(c);
     });
 
+    const isEditor = APP.profile?.role === 'editor';
     const laneNames = { revenue: 'Revenue & GTM', ops: 'Operating Model', support: 'Support & Enablement', exec: 'Strategic / Exec' };
     const html = Object.entries(lanes).map(([laneKey, laneCards]) => {
       const cardsHtml = laneCards.map(c => `
-        <div class="card-item${c.completed ? ' completed' : ''}" data-card-id="${c.id}" data-owner="${c.owner}" data-priority="${c.priority}">
+        <div class="card-item${c.completed ? ' completed' : ''}" data-card-id="${c.id}" data-owner="${c.owner}" data-priority="${c.priority}"${isEditor ? ' draggable="true"' : ''}>
           <div class="card-title-row">
             <div class="card-title">${c.title}</div>
-            ${APP.profile?.role === 'editor' ? `<button class="card-complete-btn${c.completed ? ' done' : ''}" onclick="toggleComplete('${c.id}')" title="${c.completed ? 'Mark incomplete' : 'Mark complete'}">✓</button>` : ''}
+            ${isEditor ? `<button class="card-complete-btn${c.completed ? ' done' : ''}" onclick="toggleComplete('${c.id}')" title="${c.completed ? 'Mark incomplete' : 'Mark complete'}">✓</button>` : ''}
           </div>
           <div class="card-meta">
             <span class="tag owner-${c.owner === 'joint' ? 'joint' : c.owner === 'moz' ? 'moz' : 'soci'}">${c.owner.toUpperCase()}</span>
@@ -1420,7 +1443,7 @@
         </div>
       `).join('');
       return `
-        <div class="lane ${laneKey}">
+        <div class="lane ${laneKey}" data-lane="${laneKey}">
           <div class="lane-head">
             <div class="lane-name">${laneNames[laneKey]}</div>
             <div class="lane-count">${laneCards.length}</div>
@@ -1437,6 +1460,8 @@
         toggleCardDetail(e.currentTarget);
       });
     });
+
+    initDragDrop();
   }
 
   function toggleCardDetail(el) {
@@ -1619,6 +1644,118 @@
     document.getElementById('timeline').innerHTML = html;
   }
 
+  // ---- Drag and Drop ----
+  let dragState = { cardId: null, sourceLane: null };
+
+  function initDragDrop() {
+    if (APP.profile?.role !== 'editor') return;
+
+    document.querySelectorAll('.card-item[draggable="true"]').forEach(card => {
+      card.addEventListener('dragstart', onDragStart);
+      card.addEventListener('dragend', onDragEnd);
+    });
+
+    document.querySelectorAll('.lane').forEach(lane => {
+      lane.addEventListener('dragover', onDragOver);
+      lane.addEventListener('dragleave', onDragLeave);
+      lane.addEventListener('drop', onDrop);
+    });
+  }
+
+  function onDragStart(e) {
+    dragState.cardId = e.currentTarget.dataset.cardId;
+    dragState.sourceLane = e.currentTarget.closest('.lane').dataset.lane;
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    document.querySelectorAll('.lane.drag-over').forEach(el => el.classList.remove('drag-over'));
+  }
+
+  function getDragAfterElement(lane, y) {
+    const cards = [...lane.querySelectorAll('.card-item:not(.dragging)')];
+    return cards.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, element: child };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY }).element;
+  }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const lane = e.currentTarget;
+    document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
+    lane.classList.add('drag-over');
+    const cardsEl = lane.querySelector('.cards');
+    cardsEl.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    const afterEl = getDragAfterElement(lane, e.clientY);
+    const indicator = document.createElement('div');
+    indicator.className = 'drop-indicator';
+    if (!afterEl) cardsEl.appendChild(indicator);
+    else cardsEl.insertBefore(indicator, afterEl);
+  }
+
+  function onDragLeave(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      e.currentTarget.classList.remove('drag-over');
+      e.currentTarget.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    }
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    const lane = e.currentTarget;
+    const targetLane = lane.dataset.lane;
+    document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
+    if (!dragState.cardId) return;
+
+    const afterEl = getDragAfterElement(lane, e.clientY);
+    const afterCardId = afterEl ? afterEl.dataset.cardId : null;
+    const cardToMove = APP.state.cards.find(c => c.id === dragState.cardId);
+    if (!cardToMove) return;
+
+    const sourceLane = dragState.sourceLane;
+    cardToMove.lane = targetLane;
+
+    // Remove card from array then re-insert at correct position
+    APP.state.cards = APP.state.cards.filter(c => c.id !== dragState.cardId);
+    if (afterCardId) {
+      const insertAt = APP.state.cards.findIndex(c => c.id === afterCardId);
+      APP.state.cards.splice(insertAt, 0, cardToMove);
+    } else {
+      let lastIdx = -1;
+      APP.state.cards.forEach((c, i) => { if (c.lane === targetLane) lastIdx = i; });
+      if (lastIdx >= 0) APP.state.cards.splice(lastIdx + 1, 0, cardToMove);
+      else APP.state.cards.push(cardToMove);
+    }
+
+    recalcPriorities(targetLane);
+    if (sourceLane !== targetLane) recalcPriorities(sourceLane);
+
+    renderKanban(APP.state.cards);
+    renderFilters();
+    saveState();
+    dragState = { cardId: null, sourceLane: null };
+  }
+
+  function recalcPriorities(laneKey) {
+    const laneCards = APP.state.cards.filter(c => c.lane === laneKey);
+    const total = laneCards.length;
+    if (total === 0) return;
+    laneCards.forEach((card, i) => {
+      if (i < Math.ceil(total / 3)) card.priority = 'high';
+      else if (i < Math.ceil(total * 2 / 3)) card.priority = 'med';
+      else card.priority = 'low';
+    });
+  }
+  // ---- End Drag and Drop ----
+
   async function saveState() {
     if (!APP.sb || APP.profile?.role !== 'editor') return;
     const indicator = document.getElementById('savingIndicator');
@@ -1684,7 +1821,11 @@
     ).join('');
 
     const todayPct = toPct(today.toISOString().slice(0, 10));
-    const todayLine = todayPct >= 0 && todayPct <= 100
+    const inRange = todayPct >= 0 && todayPct <= 100;
+    const todayHeaderMarker = inRange
+      ? `<div class="gantt-today-header-marker" style="left:${todayPct.toFixed(1)}%">Today</div>`
+      : '';
+    const todayLine = inRange
       ? `<div class="gantt-today-line" style="left:${todayPct.toFixed(1)}%"></div>`
       : '';
 
@@ -1727,7 +1868,7 @@
       <div class="gantt-inner">
         <div class="gantt-head-row">
           <div class="gantt-label-col-head">Deliverable</div>
-          <div class="gantt-months">${monthTicks}</div>
+          <div class="gantt-months">${monthTicks}${todayHeaderMarker}</div>
         </div>
         ${groupsHtml}
       </div>`;
