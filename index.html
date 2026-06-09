@@ -974,20 +974,48 @@
     z-index: 1;
     display: flex;
     align-items: center;
-    padding: 0 7px;
+    padding: 0;
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
-    cursor: pointer;
+    cursor: grab;
     transition: filter 0.15s ease;
-    min-width: 4px;
+    min-width: 12px;
+    user-select: none;
   }
-  .gantt-bar:hover { filter: brightness(0.88); }
+  .gantt-bar:active { cursor: grabbing; }
+  .gantt-bar:hover { filter: brightness(0.92); }
+  .gantt-bar.dragging-gantt { opacity: 0.5; cursor: grabbing; }
   .gantt-bar.revenue { background: var(--green); color: var(--white); }
   .gantt-bar.ops { background: var(--blue); color: #065f6e; }
   .gantt-bar.support { background: var(--amber); color: #78350F; }
   .gantt-bar.exec { background: var(--moz-blue); color: var(--white); }
+  .gantt-bar-handle {
+    width: 6px;
+    flex-shrink: 0;
+    align-self: stretch;
+    cursor: ew-resize;
+    background: rgba(0,0,0,0.12);
+    transition: background 0.15s;
+  }
+  .gantt-bar-handle:hover { background: rgba(0,0,0,0.28); }
+  .gantt-bar-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    padding: 0 5px;
+    overflow: hidden;
+    gap: 4px;
+    min-width: 0;
+  }
+  .gantt-bar-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
   .gantt-owner-tag {
     display: inline-block;
     font-size: 9px;
@@ -995,9 +1023,35 @@
     padding: 1px 4px;
     border-radius: 2px;
     background: rgba(255,255,255,0.25);
-    margin-right: 5px;
     flex-shrink: 0;
   }
+  /* Status dots */
+  .gantt-status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1.5px solid rgba(255,255,255,0.6);
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+  .gantt-status-dot:hover { transform: scale(1.35); }
+  .card-status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    cursor: pointer;
+    flex-shrink: 0;
+    border: 1.5px solid var(--gray-mid);
+    transition: transform 0.15s;
+    vertical-align: middle;
+  }
+  .card-status-dot:hover { transform: scale(1.35); }
+  /* Gantt row label clickable */
+  .gantt-row-label[data-card-id] {
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .gantt-row-label[data-card-id]:hover { color: var(--green-dark); text-decoration: underline; }
   /* Drag and drop */
   .card-item[draggable="true"] { cursor: grab; }
   .card-item[draggable="true"]:active { cursor: grabbing; }
@@ -1432,6 +1486,7 @@
             ${isEditor ? `<button class="card-complete-btn${c.completed ? ' done' : ''}" onclick="toggleComplete('${c.id}')" title="${c.completed ? 'Mark incomplete' : 'Mark complete'}">✓</button>` : ''}
           </div>
           <div class="card-meta">
+            <span class="card-status-dot" data-status-card="${c.id}" style="background:${STATUS_CONFIG[c.status||'not_started'].color}" title="${STATUS_CONFIG[c.status||'not_started'].label}" onclick="event.stopPropagation();cycleStatus('${c.id}')"></span>
             <span class="tag owner-${c.owner === 'joint' ? 'joint' : c.owner === 'moz' ? 'moz' : 'soci'}">${c.owner.toUpperCase()}</span>
             <span class="tag due">${c.due}</span>
             <span class="tag priority-${c.priority}">${c.priority.toUpperCase()}</span>
@@ -1644,6 +1699,131 @@
     document.getElementById('timeline').innerHTML = html;
   }
 
+  // ---- Status System ----
+  const STATUS_CONFIG = {
+    not_started: { color: 'var(--gray)',       label: 'Not Started' },
+    started:     { color: 'var(--amber)',      label: 'In Progress (<50%)' },
+    halfway:     { color: 'var(--blue)',       label: 'In Progress (>50%)' },
+    complete:    { color: 'var(--green)',      label: 'Complete' },
+  };
+  const STATUS_CYCLE = ['not_started', 'started', 'halfway', 'complete'];
+
+  function cycleStatus(cardId) {
+    const card = APP.state?.cards?.find(c => c.id === cardId);
+    if (!card) return;
+    const idx = STATUS_CYCLE.indexOf(card.status || 'not_started');
+    const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+    card.status = next;
+    card.completed = next === 'complete';
+    const cfg = STATUS_CONFIG[next];
+    // Update all dots for this card (kanban + gantt)
+    document.querySelectorAll(`[data-status-card="${cardId}"]`).forEach(dot => {
+      dot.style.background = cfg.color;
+      dot.title = cfg.label;
+    });
+    // Sync completed styling on kanban card
+    const cardEl = document.querySelector(`[data-card-id="${cardId}"]`);
+    if (cardEl) {
+      cardEl.classList.toggle('completed', card.completed);
+      const btn = cardEl.querySelector('.card-complete-btn');
+      if (btn) btn.classList.toggle('done', card.completed);
+    }
+    saveState();
+  }
+
+  // ---- Gantt Bar Drag ----
+  let ganttDrag = null;
+
+  function pctToDate(pct) {
+    const START_MS = new Date('2026-06-01').getTime();
+    const END_MS   = new Date('2026-12-31').getTime();
+    const ms = START_MS + (Math.max(0, Math.min(100, pct)) / 100) * (END_MS - START_MS);
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+
+  function initGanttInteractions() {
+    // Label click → scroll to card and expand
+    document.querySelectorAll('.gantt-row-label[data-card-id]').forEach(label => {
+      label.addEventListener('click', () => {
+        const cardEl = document.querySelector(`#kanban [data-card-id="${label.dataset.cardId}"]`);
+        if (!cardEl) return;
+        document.getElementById('q3').scrollIntoView({ behavior: 'smooth' });
+        setTimeout(() => {
+          cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (!cardEl.classList.contains('expanded')) toggleCardDetail(cardEl);
+        }, 400);
+      });
+    });
+
+    if (APP.profile?.role !== 'editor') return;
+
+    // Bar body → move
+    document.querySelectorAll('.gantt-bar').forEach(bar => {
+      bar.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('gantt-bar-handle') ||
+            e.target.classList.contains('gantt-status-dot')) return;
+        e.preventDefault();
+        startGanttDrag(e, 'move', bar);
+      });
+    });
+
+    // Handles → resize
+    document.querySelectorAll('.gantt-bar-handle').forEach(handle => {
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startGanttDrag(e, handle.dataset.side === 'left' ? 'resize-left' : 'resize-right', handle.closest('.gantt-bar'));
+      });
+    });
+  }
+
+  function startGanttDrag(e, type, barEl) {
+    const track = barEl.closest('.gantt-row-track');
+    if (!track) return;
+    ganttDrag = {
+      type,
+      cardId: barEl.dataset.cardId,
+      barEl,
+      trackRect: track.getBoundingClientRect(),
+      startX: e.clientX,
+      initLeft: parseFloat(barEl.style.left),
+      initWidth: parseFloat(barEl.style.width),
+    };
+    barEl.classList.add('dragging-gantt');
+    document.addEventListener('mousemove', onGanttDragMove);
+    document.addEventListener('mouseup', onGanttDragEnd);
+  }
+
+  function onGanttDragMove(e) {
+    if (!ganttDrag) return;
+    const { type, barEl, trackRect, startX, initLeft, initWidth } = ganttDrag;
+    const deltaPct = ((e.clientX - startX) / trackRect.width) * 100;
+    if (type === 'move') {
+      barEl.style.left = Math.max(0, Math.min(100 - initWidth, initLeft + deltaPct)).toFixed(2) + '%';
+    } else if (type === 'resize-right') {
+      barEl.style.width = Math.max(1, Math.min(100 - initLeft, initWidth + deltaPct)).toFixed(2) + '%';
+    } else if (type === 'resize-left') {
+      const newLeft = Math.max(0, Math.min(initLeft + initWidth - 1, initLeft + deltaPct));
+      barEl.style.left  = newLeft.toFixed(2) + '%';
+      barEl.style.width = Math.max(1, initWidth - (newLeft - initLeft)).toFixed(2) + '%';
+    }
+  }
+
+  function onGanttDragEnd() {
+    if (!ganttDrag) return;
+    const { barEl, cardId } = ganttDrag;
+    barEl.classList.remove('dragging-gantt');
+    document.removeEventListener('mousemove', onGanttDragMove);
+    document.removeEventListener('mouseup', onGanttDragEnd);
+    const card = APP.state?.cards?.find(c => c.id === cardId);
+    if (card) {
+      card.start = pctToDate(parseFloat(barEl.style.left));
+      card.end   = pctToDate(parseFloat(barEl.style.left) + parseFloat(barEl.style.width));
+      saveState();
+    }
+    ganttDrag = null;
+  }
+
   // ---- Drag and Drop ----
   let dragState = { cardId: null, sourceLane: null };
 
@@ -1838,18 +2018,27 @@
         const right = toPct(c.end   || '2026-12-31');
         const width = Math.max(0.8, right - left);
         const ownerTag = c.owner === 'joint' ? 'JNT' : c.owner === 'moz' ? 'MOZ' : 'SOCi';
-        const barText = width > 7
-          ? `<span class="gantt-owner-tag">${ownerTag}</span>${c.title}`
-          : '';
+        const showLabel = width > 7;
+        const sCfg = STATUS_CONFIG[c.status || 'not_started'];
         return `
           <div class="gantt-row">
-            <div class="gantt-row-label" title="${c.title}">${c.title}</div>
+            <div class="gantt-row-label" title="Click to view details" data-card-id="${c.id}">${c.title}</div>
             <div class="gantt-row-track">
               ${vlines}
               ${todayLine}
-              <div class="gantt-bar ${laneKey}"
+              <div class="gantt-bar ${laneKey}" data-card-id="${c.id}"
                    style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"
-                   title="${c.title} · ${c.due}">${barText}</div>
+                   title="${c.title} · ${c.due}">
+                <div class="gantt-bar-handle" data-side="left"></div>
+                <div class="gantt-bar-content">
+                  <div class="gantt-status-dot" data-status-card="${c.id}"
+                       style="background:${sCfg.color}"
+                       title="${sCfg.label}"
+                       onclick="event.stopPropagation();cycleStatus('${c.id}')"></div>
+                  ${showLabel ? `<span class="gantt-owner-tag">${ownerTag}</span><span class="gantt-bar-label">${c.title}</span>` : ''}
+                </div>
+                <div class="gantt-bar-handle" data-side="right"></div>
+              </div>
             </div>
           </div>`;
       }).join('');
@@ -1872,6 +2061,8 @@
         </div>
         ${groupsHtml}
       </div>`;
+
+    initGanttInteractions();
   }
 
   async function handleSignin() {
