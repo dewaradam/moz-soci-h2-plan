@@ -635,6 +635,49 @@
     border-radius: 3px;
   }
 
+  /* KPI expandable */
+  .kpi-card { cursor: pointer; }
+  .kpi-card:hover { border-color: var(--green); box-shadow: var(--shadow-md); }
+  .kpi-expand { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gray-mid); }
+  .kpi-card.expanded .kpi-expand { display: block; }
+  .kpi-comment-list { max-height: 180px; overflow-y: auto; margin-bottom: 8px; }
+  .kpi-comment { padding: 6px 0; border-bottom: 1px solid var(--gray-light); font-size: 12px; }
+  .kpi-comment:last-child { border-bottom: none; }
+  .kpi-comment-author { font-weight: 700; color: var(--black); font-size: 11px; }
+  .kpi-comment-text { color: var(--gray-text); margin-top: 2px; line-height: 1.4; }
+  .kpi-comment-input { display: flex; gap: 6px; margin-top: 8px; }
+  .kpi-comment-input input {
+    flex: 1; padding: 6px 8px; border: 1px solid var(--gray-mid); border-radius: 3px;
+    font-size: 12px; font-family: inherit;
+  }
+  .kpi-comment-input input:focus { outline: none; border-color: var(--green); }
+  .kpi-comment-input button {
+    background: var(--black); color: var(--white); border: none;
+    padding: 6px 10px; border-radius: 3px; font-size: 11px; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+  }
+  .kpi-comment-input button:hover { background: var(--green-dark); }
+  .kpi-pending-item {
+    background: #FEF3C7; border: 1px solid var(--amber); border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px; font-size: 12px;
+  }
+  .kpi-pending-item .pending-author { font-weight: 700; font-size: 11px; color: #92400E; margin-bottom: 4px; }
+  .kpi-pending-item .pending-text { color: var(--black); margin-bottom: 8px; line-height: 1.4; }
+  .kpi-pending-actions { display: flex; gap: 6px; }
+  .kpi-pending-actions button {
+    padding: 4px 10px; font-size: 11px; font-weight: 600; border-radius: 3px;
+    border: none; cursor: pointer;
+  }
+  .btn-approve { background: var(--green); color: var(--white); }
+  .btn-reject  { background: var(--gray-light); color: var(--gray-text); }
+  /* Pending badge on nav */
+  .pending-badge {
+    display: none; background: var(--red-soft); color: var(--white);
+    font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 999px;
+    margin-left: 3px; vertical-align: middle;
+  }
+  .pending-badge.show { display: inline; }
+
   /* Cadence calendar */
   .cadence-wrap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
   .cadence-col {
@@ -1159,7 +1202,7 @@
     <li><a href="#q3">Q3 Sprint</a></li>
     <li><a href="#gantt">Gantt</a></li>
     <li><a href="#q4">Q4 Timeline</a></li>
-    <li><a href="#kpis">KPIs</a></li>
+    <li><a href="#kpis">KPIs <span class="pending-badge" id="kpiPendingBadge"></span></a></li>
     <li><a href="#cadence">Cadence</a></li>
     <li><a href="#open">Open Items</a></li>
     <li><a href="#owners">Owners</a></li>
@@ -1404,6 +1447,7 @@
     APP.state = data?.data || window.DEFAULT_STATE;
     renderFromState(APP.state);
     await loadCommentCounts();
+    updateKPIPendingBadge();
   }
 
   async function loadCommentCounts() {
@@ -1694,20 +1738,151 @@
   }
 
   function renderKPIs(kpis) {
-    const html = kpis.map(k => `
-      <div class="kpi-card">
-        <div class="kpi-name">${k.pillar}</div>
-        <div class="kpi-headline">${k.headline}</div>
-        <div class="kpi-progress">
-          <span class="kpi-current">${k.current}</span>
-          <span class="kpi-arrow">→</span>
-          <span class="kpi-target">${k.target}</span>
-        </div>
-        <div class="kpi-note">${k.note}</div>
-        <span class="kpi-owner">${k.owners}</span>
-      </div>
-    `).join('');
+    const pending = APP.state?.kpi_pending || [];
+    const html = kpis.map((k, i) => {
+      const kpiId = k.id || `kpi-${i}`;
+      const kpiPending = pending.filter(p => p.kpiId === kpiId);
+      const pendingHtml = APP.profile?.email === 'adewar@meetsoci.com' && kpiPending.length
+        ? `<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#92400E;margin-bottom:6px;">Pending Suggestions (${kpiPending.length})</div>
+           ${kpiPending.map(p => `
+             <div class="kpi-pending-item">
+               <div class="pending-author">${escHtml(p.authorName)}</div>
+               <div class="pending-text">${escHtml(p.text)}</div>
+               <div class="kpi-pending-actions">
+                 <button class="btn-approve" onclick="event.stopPropagation();approveKPISuggestion('${kpiId}','${p.id}')">✓ Apply to card</button>
+                 <button class="btn-reject"  onclick="event.stopPropagation();rejectKPISuggestion('${kpiId}','${p.id}')">✕ Dismiss</button>
+               </div>
+             </div>`).join('')}
+           </div>` : '';
+      return `
+        <div class="kpi-card" data-kpi-id="${kpiId}" onclick="toggleKPI(this)">
+          <div class="kpi-name">${k.pillar}</div>
+          <div class="kpi-headline">${k.headline}</div>
+          <div class="kpi-progress">
+            <span class="kpi-current">${k.current}</span>
+            <span class="kpi-arrow">→</span>
+            <span class="kpi-target">${k.target}</span>
+          </div>
+          <div class="kpi-note" id="kpi-note-${kpiId}">${k.note}</div>
+          <span class="kpi-owner">${k.owners}</span>
+          <div class="kpi-expand">
+            ${pendingHtml}
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);margin-bottom:6px;">Comments</div>
+            <div class="kpi-comment-list" id="kpi-comments-${kpiId}"><div style="font-size:12px;color:var(--gray-text);">Loading…</div></div>
+            ${APP.profile ? `
+              <div class="kpi-comment-input">
+                <input type="text" id="kpi-input-${kpiId}" placeholder="${APP.profile.email === 'adewar@meetsoci.com' ? 'Update this KPI note…' : 'Suggest a note update (sent to Adam for approval)…'}" onclick="event.stopPropagation()">
+                <button onclick="event.stopPropagation();postKPIComment('${kpiId}')">
+                  ${APP.profile.email === 'adewar@meetsoci.com' ? 'Update' : 'Suggest'}
+                </button>
+              </div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
     document.getElementById('kpiGrid').innerHTML = html;
+    updateKPIPendingBadge();
+  }
+
+  function toggleKPI(el) {
+    const kpiId = el.dataset.kpiId;
+    const wasExpanded = el.classList.contains('expanded');
+    document.querySelectorAll('.kpi-card.expanded').forEach(c => c.classList.remove('expanded'));
+    if (!wasExpanded) {
+      el.classList.add('expanded');
+      loadKPIComments(kpiId);
+    }
+  }
+
+  async function loadKPIComments(kpiId) {
+    const container = document.getElementById(`kpi-comments-${kpiId}`);
+    if (!container || !APP.sb) return;
+    const { data } = await APP.sb.from('comments').select('*').eq('card_id', kpiId).order('created_at', { ascending: true });
+    if (!data || data.length === 0) {
+      container.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">No comments yet.</div>';
+      return;
+    }
+    container.innerHTML = data.map(c => `
+      <div class="kpi-comment">
+        <div class="kpi-comment-author">${escHtml(c.author_name)}</div>
+        <div class="kpi-comment-text">${escHtml(c.text)}</div>
+      </div>`).join('');
+  }
+
+  async function postKPIComment(kpiId) {
+    const input = document.getElementById(`kpi-input-${kpiId}`);
+    if (!APP.sb || !input?.value.trim()) return;
+    const text = input.value.trim();
+    const isAdam = APP.profile?.email === 'adewar@meetsoci.com';
+
+    if (isAdam) {
+      // Auto-update the KPI note directly
+      const kpi = APP.state?.kpis?.find(k => k.id === kpiId);
+      if (kpi) {
+        kpi.note = text;
+        const noteEl = document.getElementById(`kpi-note-${kpiId}`);
+        if (noteEl) noteEl.textContent = text;
+        // Also log as a comment
+        await APP.sb.from('comments').insert({
+          card_id: kpiId,
+          author_id: APP.profile.id,
+          author_name: APP.profile.full_name || APP.profile.email,
+          author_role: APP.profile.role,
+          text,
+        });
+        saveState();
+      }
+    } else {
+      // Queue as pending suggestion
+      if (!APP.state.kpi_pending) APP.state.kpi_pending = [];
+      APP.state.kpi_pending.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+        kpiId,
+        text,
+        authorName: APP.profile.full_name || APP.profile.email,
+        authorId: APP.profile.id,
+        createdAt: new Date().toISOString(),
+      });
+      saveState();
+      updateKPIPendingBadge();
+      const card = document.querySelector(`[data-kpi-id="${kpiId}"]`);
+      if (card) renderKPIs(APP.state.kpis); // Re-render to show pending
+    }
+
+    input.value = '';
+    await loadKPIComments(kpiId);
+  }
+
+  function approveKPISuggestion(kpiId, suggestionId) {
+    const suggestion = APP.state?.kpi_pending?.find(p => p.id === suggestionId);
+    if (!suggestion) return;
+    const kpi = APP.state?.kpis?.find(k => k.id === kpiId);
+    if (kpi) kpi.note = suggestion.text;
+    APP.state.kpi_pending = APP.state.kpi_pending.filter(p => p.id !== suggestionId);
+    saveState();
+    renderKPIs(APP.state.kpis);
+    // Reopen the card
+    setTimeout(() => {
+      const card = document.querySelector(`[data-kpi-id="${kpiId}"]`);
+      if (card) { card.classList.add('expanded'); loadKPIComments(kpiId); }
+    }, 50);
+  }
+
+  function rejectKPISuggestion(kpiId, suggestionId) {
+    APP.state.kpi_pending = (APP.state.kpi_pending || []).filter(p => p.id !== suggestionId);
+    saveState();
+    renderKPIs(APP.state.kpis);
+  }
+
+  function updateKPIPendingBadge() {
+    const count = (APP.state?.kpi_pending || []).length;
+    const badge = document.getElementById('kpiPendingBadge');
+    if (!badge) return;
+    if (count > 0 && APP.profile?.email === 'adewar@meetsoci.com') {
+      badge.textContent = count;
+      badge.classList.add('show');
+    } else {
+      badge.classList.remove('show');
+    }
   }
 
   function renderCadence(cadence) {
