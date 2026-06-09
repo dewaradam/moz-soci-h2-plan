@@ -1206,6 +1206,15 @@
 
     <div class="filters" id="filters"></div>
 
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--gray-text);">Status:</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--gray-text);"><span style="width:10px;height:10px;border-radius:50%;background:var(--gray);display:inline-block;border:1.5px solid var(--gray-mid);"></span>Not Started</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--gray-text);"><span style="width:10px;height:10px;border-radius:50%;background:var(--amber);display:inline-block;border:1.5px solid var(--gray-mid);"></span>In Progress &lt;50%</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--gray-text);"><span style="width:10px;height:10px;border-radius:50%;background:var(--blue);display:inline-block;border:1.5px solid var(--gray-mid);"></span>In Progress &gt;50%</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--gray-text);"><span style="width:10px;height:10px;border-radius:50%;background:var(--green);display:inline-block;border:1.5px solid var(--gray-mid);"></span>Complete</span>
+      <span style="font-size:11px;color:var(--gray-text);margin-left:8px;">Click dot to update · Comments auto-detect progress</span>
+    </div>
+
     <div class="kanban" id="kanban"></div>
   </div>
 </section>
@@ -1303,7 +1312,7 @@
     session: null,
     profile: null,
     state: null,
-    activeFilters: { owner: null, priority: null },
+    activeFilters: { owner: null, priority: null, status: null },
     commentCounts: {},
   };
 
@@ -1367,6 +1376,7 @@
         showApp();
         loadState();
         setupEventListeners();
+        setupRealtime();
       }
     } else {
       document.getElementById('loginOverlay').style.display = 'flex';
@@ -1462,6 +1472,12 @@
       <span class="filter-label">Priority:</span>
       <button class="pill" data-filter="high">High</button>
       <button class="pill" data-filter="med">Medium</button>
+      <div class="filter-divider"></div>
+      <span class="filter-label">Status:</span>
+      <button class="pill" data-filter="not_started">Not Started</button>
+      <button class="pill" data-filter="started">In Progress</button>
+      <button class="pill" data-filter="halfway">Halfway+</button>
+      <button class="pill" data-filter="complete">Complete</button>
     `;
     document.getElementById('filters').innerHTML = html;
     document.querySelectorAll('#filters .pill').forEach(btn => {
@@ -1480,7 +1496,7 @@
     const laneNames = { revenue: 'Revenue & GTM', ops: 'Operating Model', support: 'Support & Enablement', exec: 'Strategic / Exec' };
     const html = Object.entries(lanes).map(([laneKey, laneCards]) => {
       const cardsHtml = laneCards.map(c => `
-        <div class="card-item${c.completed ? ' completed' : ''}" data-card-id="${c.id}" data-owner="${c.owner}" data-priority="${c.priority}"${isEditor ? ' draggable="true"' : ''}>
+        <div class="card-item${c.completed ? ' completed' : ''}" data-card-id="${c.id}" data-owner="${c.owner}" data-priority="${c.priority}" data-status="${c.status||'not_started'}"${isEditor ? ' draggable="true"' : ''}>
           <div class="card-title-row">
             <div class="card-title">${c.title}</div>
             ${isEditor ? `<button class="card-complete-btn${c.completed ? ' done' : ''}" onclick="toggleComplete('${c.id}')" title="${c.completed ? 'Mark incomplete' : 'Mark complete'}">✓</button>` : ''}
@@ -1551,52 +1567,124 @@
     container.innerHTML = `<div class="comments-list">${html}</div>${inputHtml}`;
   }
 
+  function parseCommentIntent(text) {
+    const t = text.toLowerCase();
+    let statusUpdate = null;
+    let priorityUpdate = null;
+
+    if (/\b(done|complete[d]?|finished|shipped|launched|closed|resolved|wrapped)\b/.test(t))
+      statusUpdate = 'complete';
+    else if (/\b(halfway|half[- ]way|mostly done|almost done|over 50|>50|75%|past half)\b/.test(t))
+      statusUpdate = 'halfway';
+    else if (/\b(in[- ]progress|started|working on|underway|wip|begun|kicked off|under[- ]way)\b/.test(t))
+      statusUpdate = 'started';
+
+    if (/\b(high[- ]priority|urgent|critical|escalat|p0|p1|top priority|blocker)\b/.test(t))
+      priorityUpdate = 'high';
+    else if (/\b(medium[- ]priority|med[- ]priority|moderate|p2)\b/.test(t))
+      priorityUpdate = 'med';
+    else if (/\b(low[- ]priority|deprioritize|parking|back[- ]burner|p3)\b/.test(t))
+      priorityUpdate = 'low';
+
+    return { statusUpdate, priorityUpdate };
+  }
+
   async function postComment(cardId) {
     const input = document.getElementById(`comment-input-${cardId}`);
     if (!APP.sb || !input.value.trim()) return;
+    const text = input.value.trim();
 
     const { error } = await APP.sb.from('comments').insert({
       card_id: cardId,
       author_id: APP.profile.id,
       author_name: APP.profile.full_name || APP.profile.email,
       author_role: APP.profile.role,
-      text: input.value,
+      text,
     });
     if (error) { alert('Failed to post comment: ' + error.message); return; }
     input.value = '';
+
+    // Smart intent detection
+    const card = APP.state?.cards?.find(c => c.id === cardId);
+    if (card) {
+      const { statusUpdate, priorityUpdate } = parseCommentIntent(text);
+      let stateChanged = false;
+
+      // Any comment moves a not_started card to started
+      if (!statusUpdate && (card.status === 'not_started' || !card.status)) {
+        card.status = 'started';
+        stateChanged = true;
+      }
+      if (statusUpdate) {
+        card.status = statusUpdate;
+        card.completed = statusUpdate === 'complete';
+        stateChanged = true;
+      }
+      if (priorityUpdate) {
+        card.priority = priorityUpdate;
+        stateChanged = true;
+      }
+
+      if (stateChanged) {
+        // Refresh card DOM
+        const cardEl = document.querySelector(`[data-card-id="${cardId}"]`);
+        if (cardEl) {
+          const cfg = STATUS_CONFIG[card.status || 'not_started'];
+          cardEl.querySelectorAll(`[data-status-card="${cardId}"]`).forEach(d => {
+            d.style.background = cfg.color; d.title = cfg.label;
+          });
+          cardEl.classList.toggle('completed', !!card.completed);
+          const btn = cardEl.querySelector('.card-complete-btn');
+          if (btn) btn.classList.toggle('done', !!card.completed);
+          const priTag = cardEl.querySelector('.tag[class*="priority-"]');
+          if (priTag && priorityUpdate) {
+            priTag.className = `tag priority-${card.priority}`;
+            priTag.textContent = card.priority.toUpperCase();
+          }
+        }
+        saveState();
+      }
+    }
+
     const container = document.querySelector(`[data-card-id="${cardId}"] .card-comments`);
     await loadComments(cardId, container);
     await loadCommentCounts();
   }
 
+  const OWNER_FILTERS    = ['soci', 'moz', 'joint'];
+  const PRIORITY_FILTERS = ['high', 'med'];
+  const STATUS_FILTERS   = ['not_started', 'started', 'halfway', 'complete'];
+
   function applyFilters(filter) {
     if (filter === 'all') {
-      APP.activeFilters = { owner: null, priority: null };
+      APP.activeFilters = { owner: null, priority: null, status: null };
       document.querySelectorAll('#filters .pill').forEach(btn => btn.classList.remove('active'));
       document.querySelector('[data-filter="all"]').classList.add('active');
     } else {
       document.querySelector('[data-filter="all"]').classList.remove('active');
-      const type = ['soci', 'moz', 'joint'].includes(filter) ? 'owner' : 'priority';
+      const type = OWNER_FILTERS.includes(filter) ? 'owner'
+                 : PRIORITY_FILTERS.includes(filter) ? 'priority' : 'status';
       APP.activeFilters[type] = filter !== APP.activeFilters[type] ? filter : null;
-      // Update pill active states for both groups
-      ['soci', 'moz', 'joint', 'high', 'med'].forEach(f => {
+
+      // Sync all pill states
+      [...OWNER_FILTERS, ...PRIORITY_FILTERS, ...STATUS_FILTERS].forEach(f => {
         const btn = document.querySelector(`#filters [data-filter="${f}"]`);
         if (btn) btn.classList.remove('active');
       });
-      if (APP.activeFilters.owner) {
-        const btn = document.querySelector(`#filters [data-filter="${APP.activeFilters.owner}"]`);
-        if (btn) btn.classList.add('active');
-      }
-      if (APP.activeFilters.priority) {
-        const btn = document.querySelector(`#filters [data-filter="${APP.activeFilters.priority}"]`);
-        if (btn) btn.classList.add('active');
-      }
+      ['owner', 'priority', 'status'].forEach(t => {
+        if (APP.activeFilters[t]) {
+          const btn = document.querySelector(`#filters [data-filter="${APP.activeFilters[t]}"]`);
+          if (btn) btn.classList.add('active');
+        }
+      });
     }
 
     document.querySelectorAll('.card-item').forEach(card => {
-      const ownerMatch = !APP.activeFilters.owner || card.dataset.owner === APP.activeFilters.owner;
+      const ownerMatch    = !APP.activeFilters.owner    || card.dataset.owner    === APP.activeFilters.owner;
       const priorityMatch = !APP.activeFilters.priority || card.dataset.priority === APP.activeFilters.priority;
-      card.classList.toggle('hidden', !(ownerMatch && priorityMatch));
+      const cardStatus    = card.dataset.status || 'not_started';
+      const statusMatch   = !APP.activeFilters.status   || cardStatus === APP.activeFilters.status;
+      card.classList.toggle('hidden', !(ownerMatch && priorityMatch && statusMatch));
     });
 
     document.querySelectorAll('.lane').forEach(lane => {
@@ -1939,11 +2027,31 @@
   async function saveState() {
     if (!APP.sb || APP.profile?.role !== 'editor') return;
     const indicator = document.getElementById('savingIndicator');
-    indicator.classList.add('show');
-    const { error } = await APP.sb.from('plan_state')
-      .upsert({ id: 1, data: APP.state, last_edit_at: new Date().toISOString(), last_edit_by: APP.profile.id });
-    indicator.classList.remove('show');
-    if (error) alert('Save failed: ' + error.message);
+    indicator.textContent = 'Saving…';
+    indicator.className = 'saving-indicator show';
+
+    const payload = { data: APP.state, last_edit_at: new Date().toISOString(), last_edit_by: APP.profile.id };
+
+    // Try UPDATE first (avoids needing INSERT policy when row already exists)
+    const { data: updated, error: updateErr } = await APP.sb
+      .from('plan_state').update(payload).eq('id', 1).select('id');
+
+    let finalError = updateErr;
+    if (!updateErr && (!updated || updated.length === 0)) {
+      // Row doesn't exist — INSERT it
+      const { error: insertErr } = await APP.sb
+        .from('plan_state').insert({ id: 1, ...payload });
+      finalError = insertErr;
+    }
+
+    if (finalError) {
+      indicator.textContent = '⚠ Save failed — check Supabase INSERT policy';
+      indicator.style.background = '#B91C1C';
+      setTimeout(() => { indicator.classList.remove('show'); indicator.style.background = ''; }, 4000);
+    } else {
+      indicator.textContent = `✓ Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      setTimeout(() => indicator.classList.remove('show'), 2500);
+    }
   }
 
   function toggleComplete(cardId) {
@@ -2141,6 +2249,25 @@
     });
   }
 
+  function setupRealtime() {
+    if (!APP.sb) return;
+    APP.sb.channel('plan-live')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plan_state' },
+        (payload) => {
+          // Don't overwrite mid-drag or if this user just saved
+          if (ganttDrag) return;
+          APP.state = payload.new.data;
+          renderFromState(APP.state);
+          const ind = document.getElementById('savingIndicator');
+          ind.textContent = '↻ Updated by teammate';
+          ind.className = 'saving-indicator show';
+          setTimeout(() => ind.classList.remove('show'), 2500);
+        })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments' },
+        () => loadCommentCounts())
+      .subscribe();
+  }
+
   function setupEventListeners() {
 
     const sections = document.querySelectorAll('section[id]');
@@ -2161,6 +2288,17 @@
     onScroll();
 
     jumpFab.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+    // Escape key collapses any expanded card
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.card-item.expanded').forEach(card => {
+          card.classList.remove('expanded');
+          card.querySelector('.card-detail').style.display = 'none';
+          card.querySelector('.card-comments').style.display = 'none';
+        });
+      }
+    });
 
     navLinks.forEach(link => {
       link.addEventListener('click', (e) => {
